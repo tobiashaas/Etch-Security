@@ -8,8 +8,14 @@
  *              Log — selbst gehostetes, dauerhaftes Sicherheits-Log (Actor, IP,
  *              Request) unabhängig von Premium-Plugins. Hält sich per
  *              GitHub-Releases selbst aktuell. Ansicht: Werkzeuge → Etch Security.
- * Version:     1.0.0
+ * Version:     1.1.0
  * Author:      Tobias Haas
+ *
+ * 1.1.0: Modul „Core Updates" — erzwingt WordPress-Minor-/Security-Auto-Updates,
+ *        auch wenn ein Management-Tool (z. B. Installatron) sie per Filter
+ *        abgeschaltet hat. Nur Point-Releases derselben X.Y-Reihe; Major-Updates
+ *        bleiben unberührt. Grund: ein geblockter Forced-Security-Update ließ die
+ *        Site 3 Tage auf einer unauth-RCE-verwundbaren Core-Version stehen.
  * Author URI:  https://github.com/tobiashaas
  * License:     GPL-2.0-or-later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -30,7 +36,7 @@
 
 if (!defined('ABSPATH')) exit;
 
-if (!defined('ETCH_SECURITY_VERSION')) define('ETCH_SECURITY_VERSION', '1.0.0');
+if (!defined('ETCH_SECURITY_VERSION')) define('ETCH_SECURITY_VERSION', '1.1.0');
 if (!defined('ETCH_SECURITY_REPO'))    define('ETCH_SECURITY_REPO', 'tobiashaas/Etch-Security');
 if (!defined('ETCH_SECURITY_FILE'))    define('ETCH_SECURITY_FILE', __FILE__);
 
@@ -43,6 +49,7 @@ final class EtchSecurity_Config
 {
     const OPT_DOMAINS = 'etch_security_allowed_domains';   // array von Domains
     const OPT_ENFORCE = 'etch_security_enforce';           // '1' | '0'
+    const OPT_CORE_UPDATES = 'etch_security_force_core_updates'; // '1' | '0' (Default an)
 
     /** Konfigurierte Domains (Option, plus Konstante als Erst-Default). */
     public static function configured_domains()
@@ -77,6 +84,12 @@ final class EtchSecurity_Config
     {
         if (get_option(self::OPT_ENFORCE, '0') !== '1') return false;
         return count(self::configured_domains()) > 0;
+    }
+
+    /** Core-Security-Auto-Updates erzwingen (Default an). */
+    public static function force_core_updates()
+    {
+        return get_option(self::OPT_CORE_UPDATES, '1') === '1';
     }
 
     public static function is_allowed($email)
@@ -570,6 +583,14 @@ final class EtchSecurity_Admin
         $enforcing = EtchSecurity_Config::enforcing();
         $st       = EtchSecurity_Updater::status();
 
+        echo '<h3>WordPress-Core</h3>';
+        echo '<table class="widefat" style="max-width:820px"><tbody>';
+        self::row('Core-Version', '<code>' . esc_html(get_bloginfo('version')) . '</code>');
+        self::row('Security-Auto-Updates', EtchSecurity_Config::force_core_updates()
+            ? '<strong style="color:#1a7f37">erzwungen</strong> — Minor/Security laufen durch, auch gegen einen Blocker (z. B. Installatron)'
+            : '<span style="color:#996800">nicht erzwungen</span> — es gilt die Site-Policy');
+        echo '</tbody></table>';
+
         echo '<h3>User Guard</h3>';
         echo '<table class="widefat" style="max-width:820px"><tbody>';
         self::row('Enforcement', $enforcing
@@ -588,6 +609,11 @@ final class EtchSecurity_Admin
             . 'Enforcement einschalten (fremde Konten sofort entschärfen)</label></p>';
         echo '<p class="description">Die Domain der Site-Admin-Adresse (' . esc_html(get_option('admin_email'))
             . ') ist immer erlaubt. Ohne konfigurierte Domain bleibt Enforcement aus Sicherheitsgründen aus.</p>';
+        echo '<p style="margin-top:1.5em"><label><input type="checkbox" name="force_core" value="1"'
+            . checked(EtchSecurity_Config::force_core_updates(), true, false) . '> '
+            . '<strong>WordPress-Core-Sicherheitsupdates erzwingen</strong> — lässt Minor-/Security-Point-Releases '
+            . 'automatisch durchlaufen, auch wenn ein Management-Tool (z. B. Installatron) sie abgeschaltet hat. '
+            . 'Major-Versionssprünge bleiben unberührt.</label></p>';
         submit_button('Speichern');
         echo '</form>';
 
@@ -681,6 +707,7 @@ final class EtchSecurity_Admin
         $domains = EtchSecurity_Config::parse(isset($_POST['domains']) ? wp_unslash($_POST['domains']) : '');
         update_option(EtchSecurity_Config::OPT_DOMAINS, $domains, false);
         update_option(EtchSecurity_Config::OPT_ENFORCE, empty($_POST['enforce']) ? '0' : '1', false);
+        update_option(EtchSecurity_Config::OPT_CORE_UPDATES, empty($_POST['force_core']) ? '0' : '1', false);
         $msg = $domains ? 'Gespeichert.' : 'Gespeichert (keine Domain → Enforcement bleibt aus).';
         wp_safe_redirect(add_query_arg('msg', rawurlencode($msg), self::tab_url('status')));
         exit;
@@ -718,10 +745,65 @@ final class EtchSecurity_Admin
 
 
 /* =============================================================================
- * 6) Bootstrap
+ * 6) Core Updates — Minor-/Security-Auto-Updates erzwingen
+ * ========================================================================== */
+
+final class EtchSecurity_Core_Updates
+{
+    public static function boot()
+    {
+        if (!EtchSecurity_Config::force_core_updates()) return;
+
+        // Überstimmt Blocker wie Installatron (die per __return_false abschalten):
+        // spätere Priorität gewinnt, PHP_INT_MAX läuft als letztes.
+        add_filter('allow_minor_auto_core_updates', '__return_true', PHP_INT_MAX);
+        add_filter('auto_update_core', array(__CLASS__, 'allow_security'), PHP_INT_MAX, 2);
+
+        // Ergebnis eines Auto-Updates ins Audit-Log.
+        add_action('automatic_updates_complete', array(__CLASS__, 'log_result'), 10, 1);
+    }
+
+    /**
+     * Erzwingt das Auto-Update NUR für Minor-/Security-Point-Releases (gleiche
+     * X.Y-Reihe, z. B. 7.0.1 → 7.0.2). Major-Updates behalten die bestehende
+     * Entscheidung — die bleiben bei Installatron/manuell.
+     */
+    public static function allow_security($update, $item)
+    {
+        if (!is_object($item) || empty($item->current)) return $update;
+        $installed = isset($GLOBALS['wp_version']) ? $GLOBALS['wp_version'] : get_bloginfo('version');
+        if (self::same_branch($installed, $item->current)) return true;
+        return $update;
+    }
+
+    /** Gleiche Major.Minor-Reihe? Dev-Suffixe (-beta/-RC) werden ignoriert. */
+    private static function same_branch($a, $b)
+    {
+        $pa = explode('.', preg_replace('/[^0-9.].*$/', '', (string) $a));
+        $pb = explode('.', preg_replace('/[^0-9.].*$/', '', (string) $b));
+        return isset($pa[0], $pa[1], $pb[0], $pb[1]) && $pa[0] === $pb[0] && $pa[1] === $pb[1];
+    }
+
+    public static function log_result($results)
+    {
+        if (empty($results['core']) || !is_array($results['core'])) return;
+        foreach ($results['core'] as $r) {
+            $ver = (isset($r->item) && isset($r->item->current)) ? $r->item->current : '?';
+            $ok  = !empty($r->result) && !is_wp_error($r->result);
+            EtchSecurity_Audit_Log::log('core_auto_update',
+                array('login' => 'WordPress'),
+                array('version' => $ver, 'erfolg' => $ok ? 'ja' : 'nein'));
+        }
+    }
+}
+
+
+/* =============================================================================
+ * 7) Bootstrap
  * ========================================================================== */
 
 EtchSecurity_Audit_Log::boot();   // zuerst — andere Module loggen hierüber
 EtchSecurity_User_Guard::boot();
+EtchSecurity_Core_Updates::boot();
 EtchSecurity_Updater::boot();
 if (is_admin()) EtchSecurity_Admin::boot();

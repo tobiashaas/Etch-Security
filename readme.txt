@@ -4,7 +4,7 @@ Tags: security, audit-log, users, hardening, login
 Requires at least: 5.8
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.0.0
+Stable tag: 1.1.0
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -34,6 +34,13 @@ und aktivieren. Danach unter Werkzeuge → Etch Security die erlaubten Domains
 setzen und Enforcement einschalten.
 
 == Changelog ==
+
+= 1.1.0 =
+* Neues Modul „Core Updates": erzwingt WordPress-Minor-/Security-Auto-Updates,
+  auch wenn ein Management-Tool (z. B. Installatron) sie per Filter abschaltet.
+  Nur Point-Releases derselben X.Y-Reihe, Major-Updates bleiben unberuehrt.
+  Toggle unter Werkzeuge → Etch Security (Default an), Audit-Log-Eintrag bei jedem
+  Core-Auto-Update.
 
 = 1.0.0 =
 * Erste Release: User Guard (Domain-Allowlist + Backstop), Audit Log (Tabelle +

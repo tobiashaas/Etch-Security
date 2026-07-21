@@ -36,7 +36,20 @@ Login (Erfolg + Fehlschlag) · Passwort-Reset · Plugin-Aktivierung/-Deaktivieru
 Ansicht im Backend unter **Werkzeuge → Etch Security** (filterbar, CSV-Export).
 Aufbewahrung 180 Tage, täglich per Cron gekürzt.
 
-### 3. Self-Update über GitHub
+### 3. Core Updates — Sicherheitsupdates erzwingen
+Viele Management-Tools (Installatron, MainWP, o. ä.) schalten WordPress' eigene
+Core-Auto-Updates per Filter ab, weil sie die Updates selbst steuern wollen. Fällt
+dieses Tool aus oder ist es zu langsam, bleibt die Site auf einer verwundbaren
+Version stehen — genau das passierte hier (ein erzwungener Security-Update wurde
+geblockt, die Site hing drei Tage auf einer unauth-RCE-Lücke).
+
+Dieses Modul überstimmt solche Blocker mit höherer Filter-Priorität und lässt
+**Minor-/Security-Point-Releases** (gleiche `X.Y`-Reihe, z. B. 7.0.1 → 7.0.2)
+wieder automatisch durch. **Major-Versionssprünge** (7.0 → 7.1) bleiben bewusst
+unberührt. Jedes Auto-Update landet im Audit-Log. Toggle unter **Werkzeuge → Etch
+Security** (Standard: an).
+
+### 4. Self-Update über GitHub
 Prüft zweimal täglich `releases/latest`, vergleicht die Version und ersetzt sich
 bei einer neueren Release atomar durch die Datei aus dem Tag — mit
 Plausibilitätsprüfung, bevor irgendetwas geschrieben wird. Manuell auslösbar über
