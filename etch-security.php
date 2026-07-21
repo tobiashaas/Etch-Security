@@ -8,9 +8,13 @@
  *              Log — selbst gehostetes, dauerhaftes Sicherheits-Log (Actor, IP,
  *              Request) unabhängig von Premium-Plugins. Hält sich per
  *              GitHub-Releases selbst aktuell. Ansicht: Werkzeuge → Etch Security.
- * Version:     1.1.0
+ * Version:     1.1.1
  * Author:      Tobias Haas
  *
+ * 1.1.1: Self-Updater von api.github.com (60 Req/h pro IP → auf Shared-Hosting
+ *        schnell 403 „rate limit exceeded") auf raw.githubusercontent.com
+ *        umgestellt (CDN, kein API-Limit). Quelle der Wahrheit = die Datei auf
+ *        `main`; Version wird direkt daraus gelesen.
  * 1.1.0: Modul „Core Updates" — erzwingt WordPress-Minor-/Security-Auto-Updates,
  *        auch wenn ein Management-Tool (z. B. Installatron) sie per Filter
  *        abgeschaltet hat. Nur Point-Releases derselben X.Y-Reihe; Major-Updates
@@ -36,7 +40,7 @@
 
 if (!defined('ABSPATH')) exit;
 
-if (!defined('ETCH_SECURITY_VERSION')) define('ETCH_SECURITY_VERSION', '1.1.0');
+if (!defined('ETCH_SECURITY_VERSION')) define('ETCH_SECURITY_VERSION', '1.1.1');
 if (!defined('ETCH_SECURITY_REPO'))    define('ETCH_SECURITY_REPO', 'tobiashaas/Etch-Security');
 if (!defined('ETCH_SECURITY_FILE'))    define('ETCH_SECURITY_FILE', __FILE__);
 
@@ -449,30 +453,38 @@ final class EtchSecurity_Updater
         }
     }
 
-    /** Neueste Release-Version ermitteln (Tag ohne fuehrendes v). */
-    private static function latest_tag()
+    /**
+     * Neueste Version + Code direkt aus der Datei auf `main` ziehen.
+     * Bewusst raw.githubusercontent statt api.github.com: die GitHub-API ist pro
+     * (auf Shared-Hosting geteilter) IP auf 60 Requests/Stunde limitiert und
+     * liefert dann 403 — raw ist ein CDN ohne dieses Limit. Vertrag: `main`
+     * trägt immer die aktuellste veröffentlichte Version (Versionsbump = Release).
+     */
+    private static function fetch_main()
     {
-        $api = wp_remote_get('https://api.github.com/repos/' . ETCH_SECURITY_REPO . '/releases/latest', array(
-            'timeout' => 15,
-            'headers' => array('Accept' => 'application/vnd.github+json', 'User-Agent' => 'etch-security-updater'),
-        ));
-        if (is_wp_error($api) || wp_remote_retrieve_response_code($api) !== 200) return null;
-        $body = json_decode(wp_remote_retrieve_body($api), true);
-        return isset($body['tag_name']) ? $body['tag_name'] : null;
+        $raw = wp_remote_get(
+            'https://raw.githubusercontent.com/' . ETCH_SECURITY_REPO . '/main/etch-security.php',
+            array('timeout' => 20, 'headers' => array('User-Agent' => 'etch-security-updater'))
+        );
+        if (is_wp_error($raw) || wp_remote_retrieve_response_code($raw) !== 200) return null;
+        $code = wp_remote_retrieve_body($raw);
+        if (!preg_match('/ETCH_SECURITY_VERSION\',\s*\'([0-9][0-9.]*)\'/', $code, $m)) return null;
+        return array('version' => $m[1], 'code' => $code);
     }
 
     /**
-     * Update-Lauf. $force ignoriert den 6h-Cache. Gibt Status-Array zurueck.
+     * Update-Lauf. Gibt Status-Array zurueck. Ein Request (raw main) deckt
+     * Versionsprüfung UND Download ab.
      */
     public static function run($force = false)
     {
         $status = array('checked' => current_time('mysql'), 'installed' => ETCH_SECURITY_VERSION,
                         'latest' => null, 'action' => 'none', 'error' => null);
 
-        $tag = self::latest_tag();
-        if (!$tag) { $status['error'] = 'GitHub-API nicht erreichbar'; return self::save($status); }
+        $main = self::fetch_main();
+        if (!$main) { $status['error'] = 'raw.githubusercontent nicht erreichbar / Version nicht lesbar'; return self::save($status); }
 
-        $latest = ltrim($tag, 'vV');
+        $latest = $main['version'];
         $status['latest'] = $latest;
 
         if (version_compare($latest, ETCH_SECURITY_VERSION, '<=')) {
@@ -480,15 +492,7 @@ final class EtchSecurity_Updater
             return self::save($status);
         }
 
-        // Datei am Release-Tag ziehen.
-        $raw = wp_remote_get(
-            'https://raw.githubusercontent.com/' . ETCH_SECURITY_REPO . '/' . rawurlencode($tag) . '/etch-security.php',
-            array('timeout' => 20, 'headers' => array('User-Agent' => 'etch-security-updater'))
-        );
-        if (is_wp_error($raw) || wp_remote_retrieve_response_code($raw) !== 200) {
-            $status['error'] = 'Release-Datei nicht abrufbar'; return self::save($status);
-        }
-        $code = wp_remote_retrieve_body($raw);
+        $code = $main['code'];
 
         // Plausibilitaet: echte PHP-Datei dieses Plugins mit passender Version.
         if (strpos($code, '<?php') !== 0

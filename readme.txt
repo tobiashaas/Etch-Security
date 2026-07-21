@@ -4,7 +4,7 @@ Tags: security, audit-log, users, hardening, login
 Requires at least: 5.8
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.1.0
+Stable tag: 1.1.1
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -34,6 +34,11 @@ und aktivieren. Danach unter Werkzeuge → Etch Security die erlaubten Domains
 setzen und Enforcement einschalten.
 
 == Changelog ==
+
+= 1.1.1 =
+* Self-Updater von der GitHub-API (60 Req/h pro IP -> auf Shared-Hosting 403
+  „rate limit exceeded") auf raw.githubusercontent.com (CDN, kein Limit)
+  umgestellt. Quelle = die Datei auf main.
 
 = 1.1.0 =
 * Neues Modul „Core Updates": erzwingt WordPress-Minor-/Security-Auto-Updates,

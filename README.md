@@ -91,10 +91,20 @@ programmatisch erweitern.
 
 ## Release-Workflow
 
+Der Updater liest die Datei auf dem **`main`**-Branch über
+`raw.githubusercontent.com` (nicht die GitHub-API — die ist pro IP auf 60
+Requests/Stunde limitiert und scheitert auf Shared-Hosting mit `403`). `main`
+trägt also immer die aktuellste veröffentlichte Version.
+
 1. Version im Header **und** in `ETCH_SECURITY_VERSION` erhöhen (müssen exakt
-   übereinstimmen — der Updater prüft das).
-2. Commit + Tag `vX.Y.Z`, GitHub-Release auf diesem Tag anlegen.
-3. Installierte Sites ziehen das Update beim nächsten Cron-Lauf (oder per Button).
+   übereinstimmen — der Updater liest und prüft diese Zeile).
+2. Nach `main` pushen. (Ein GitHub-Release + Tag `vX.Y.Z` ist optional für den
+   menschlichen Changelog; der Updater braucht ihn nicht.)
+3. Installierte Sites ziehen das Update beim nächsten Cron-Lauf (2×/Tag) oder per
+   Button unter **Werkzeuge → Etch Security**.
+
+> Weil `main` die Update-Quelle ist: die Version erst beim Release erhöhen, nicht
+> für Zwischenstände — sonst ziehen Sites unfertigen Code.
 
 ## Lizenz
 
