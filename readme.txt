@@ -8,45 +8,44 @@ Stable tag: 1.1.1
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Domain-Allowlist fuer neue Konten + selbst gehostetes Audit-Log (Actor/IP/Request), in einer Datei. Self-Update ueber GitHub-Releases.
+Domain allowlist for new accounts + self-hosted audit log (actor/IP/request), in one file. Self-update via GitHub releases.
 
 == Description ==
 
-Zwei Schutzschichten plus ein dauerhaftes Sicherheits-Log:
+Two protection layers plus a persistent security log:
 
-* **User Guard** — nur erlaubte E-Mail-Domains bekommen ein Konto; fremde werden
-  sofort entschaerft (Rolle entzogen, Passwort invalidiert, Sessions beendet,
-  nicht geloescht = Beweismittel). Zwei Schichten fangen auch programmatische
-  Anlage (wp_insert_user) und nachtraegliche Rechte-Eskalation.
-* **Audit Log** — indizierte DB-Tabelle mit Actor, Ziel, IP, User-Agent, Request
-  und Kontext fuer Konten-, Auth- und Code-Ereignisse. Ansicht: Werkzeuge → Etch
-  Security. CSV-Export, 180 Tage Aufbewahrung.
-* **Self-Update** — haelt sich per GitHub-Releases aktuell.
+* **User Guard** — only allowed email domains get an account; foreign accounts are
+  immediately neutralized (role stripped, password invalidated, sessions terminated,
+  not deleted = preserved as evidence). Two layers also catch programmatic account
+  creation (wp_insert_user) and subsequent privilege escalation.
+* **Audit Log** — indexed DB table with actor, target, IP, user agent, request and
+  context for account, auth and code events. View: Tools → Etch Security.
+  CSV export, 180-day retention.
+* **Self-Update** — keeps itself current via GitHub releases.
 
-Sichere Defaults: Enforcement bleibt aus, bis Domains konfiguriert sind; die
-Admin-Domain ist immer erlaubt.
+Safe defaults: enforcement stays off until domains are configured; the admin domain
+is always allowed.
 
 == Installation ==
 
-Als mu-plugin (empfohlen): Datei nach wp-content/mu-plugins/etch-security.php
-kopieren. Oder als regulaeres Plugin in wp-content/plugins/etch-security/ ablegen
-und aktivieren. Danach unter Werkzeuge → Etch Security die erlaubten Domains
-setzen und Enforcement einschalten.
+As an mu-plugin (recommended): copy the file to wp-content/mu-plugins/etch-security.php.
+Or place it as a regular plugin in wp-content/plugins/etch-security/ and activate it.
+Then go to Tools → Etch Security to set the allowed domains and enable enforcement.
 
 == Changelog ==
 
 = 1.1.1 =
-* Self-Updater von der GitHub-API (60 Req/h pro IP -> auf Shared-Hosting 403
-  „rate limit exceeded") auf raw.githubusercontent.com (CDN, kein Limit)
-  umgestellt. Quelle = die Datei auf main.
+* Self-updater switched from the GitHub API (60 req/h per IP -> 403 "rate limit
+  exceeded" on shared hosting) to raw.githubusercontent.com (CDN, no limit).
+  Source of truth = the file on main.
 
 = 1.1.0 =
-* Neues Modul „Core Updates": erzwingt WordPress-Minor-/Security-Auto-Updates,
-  auch wenn ein Management-Tool (z. B. Installatron) sie per Filter abschaltet.
-  Nur Point-Releases derselben X.Y-Reihe, Major-Updates bleiben unberuehrt.
-  Toggle unter Werkzeuge → Etch Security (Default an), Audit-Log-Eintrag bei jedem
-  Core-Auto-Update.
+* New module "Core Updates": forces WordPress minor/security auto-updates even
+  when a management tool (e.g. Installatron) disables them via filter. Only
+  point releases of the same X.Y branch; major updates are left untouched.
+  Toggle under Tools → Etch Security (default on), audit log entry for every
+  core auto-update.
 
 = 1.0.0 =
-* Erste Release: User Guard (Domain-Allowlist + Backstop), Audit Log (Tabelle +
-  Admin-Ansicht + CSV), GitHub-Self-Updater, Einstellungsseite.
+* Initial release: User Guard (domain allowlist + backstop), Audit Log (table +
+  admin view + CSV), GitHub self-updater, settings page.

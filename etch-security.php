@@ -2,40 +2,40 @@
 /**
  * Plugin Name: Etch Security
  * Plugin URI:  https://github.com/tobiashaas/Etch-Security
- * Description: Zwei Schutzschichten in einer Datei: (1) User Guard — nur erlaubte
- *              E-Mail-Domains bekommen ein Konto, fremde werden sofort entschärft
- *              (auch bei programmatischer Anlage / Rechte-Eskalation); (2) Audit
- *              Log — selbst gehostetes, dauerhaftes Sicherheits-Log (Actor, IP,
- *              Request) unabhängig von Premium-Plugins. Hält sich per
- *              GitHub-Releases selbst aktuell. Ansicht: Werkzeuge → Etch Security.
+ * Description: Two protection layers in one file: (1) User Guard — only allowed
+ *              email domains get an account, foreign accounts are immediately
+ *              neutralized (also for programmatic creation / privilege escalation);
+ *              (2) Audit Log — self-hosted, persistent security log (actor, IP,
+ *              request) independent of premium plugins. Keeps itself up to date
+ *              via GitHub releases. View: Tools → Etch Security.
  * Version:     1.1.1
  * Author:      Tobias Haas
  *
- * 1.1.1: Self-Updater von api.github.com (60 Req/h pro IP → auf Shared-Hosting
- *        schnell 403 „rate limit exceeded") auf raw.githubusercontent.com
- *        umgestellt (CDN, kein API-Limit). Quelle der Wahrheit = die Datei auf
- *        `main`; Version wird direkt daraus gelesen.
- * 1.1.0: Modul „Core Updates" — erzwingt WordPress-Minor-/Security-Auto-Updates,
- *        auch wenn ein Management-Tool (z. B. Installatron) sie per Filter
- *        abgeschaltet hat. Nur Point-Releases derselben X.Y-Reihe; Major-Updates
- *        bleiben unberührt. Grund: ein geblockter Forced-Security-Update ließ die
- *        Site 3 Tage auf einer unauth-RCE-verwundbaren Core-Version stehen.
+ * 1.1.1: Self-updater switched from api.github.com (60 req/h per IP → 403
+ *        "rate limit exceeded" on shared hosting) to raw.githubusercontent.com
+ *        (CDN, no API limit). Source of truth = the file on `main`; version is
+ *        read directly from it.
+ * 1.1.0: Module "Core Updates" — forces WordPress minor/security auto-updates
+ *        even when a management tool (e.g. Installatron) has disabled them via
+ *        filter. Only point releases of the same X.Y branch; major updates are
+ *        left untouched. Reason: a blocked forced security update left the site
+ *        on an unauthenticated-RCE-vulnerable core version for 3 days.
  * Author URI:  https://github.com/tobiashaas
  * License:     GPL-2.0-or-later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * Update URI:  https://github.com/tobiashaas/Etch-Security
  *
- * Als mu-plugin gedacht (wp-content/mu-plugins/etch-security.php): dann kann ein
- * kompromittierter Admin es nicht deaktivieren — der Guard bleibt aktiv. Als
- * reguläres Plugin funktioniert es ebenso (die Update-Notice erscheint dann im
- * Plugins-Screen; als mu-plugin läuft das Update still per Cron).
+ * Designed as an mu-plugin (wp-content/mu-plugins/etch-security.php): a
+ * compromised admin cannot deactivate it — the guard stays active. It works
+ * equally well as a regular plugin (the update notice then appears on the
+ * Plugins screen; as an mu-plugin the update runs silently via cron).
  *
- * KONFIGURATION (alles optional, sichere Defaults):
- *   define('ETCH_SECURITY_ALLOWED_DOMAINS', 'example.com,partner.de'); // in wp-config.php
- *   — ODER — im Backend unter Werkzeuge → Etch Security pflegen.
- *   Die Domain der Site-Admin-Adresse ist IMMER erlaubt (kein Selbst-Aussperren).
- *   Enforcement ist AUS, solange keine Domain gesetzt ist: das Audit-Log läuft
- *   sofort (rein lesend, ungefährlich), der Guard greift erst nach Konfiguration.
+ * CONFIGURATION (all optional, safe defaults):
+ *   define('ETCH_SECURITY_ALLOWED_DOMAINS', 'example.com,partner.com'); // in wp-config.php
+ *   — OR — manage in the backend under Tools → Etch Security.
+ *   The domain of the site admin address is ALWAYS allowed (no self-lockout).
+ *   Enforcement is OFF as long as no domain is configured: the audit log runs
+ *   immediately (read-only, harmless), the guard only activates after configuration.
  */
 
 if (!defined('ABSPATH')) exit;
@@ -46,16 +46,16 @@ if (!defined('ETCH_SECURITY_FILE'))    define('ETCH_SECURITY_FILE', __FILE__);
 
 
 /* =============================================================================
- * 0) Gemeinsame Konfiguration
+ * 0) Shared Configuration
  * ========================================================================== */
 
 final class EtchSecurity_Config
 {
-    const OPT_DOMAINS = 'etch_security_allowed_domains';   // array von Domains
+    const OPT_DOMAINS = 'etch_security_allowed_domains';   // array of domains
     const OPT_ENFORCE = 'etch_security_enforce';           // '1' | '0'
-    const OPT_CORE_UPDATES = 'etch_security_force_core_updates'; // '1' | '0' (Default an)
+    const OPT_CORE_UPDATES = 'etch_security_force_core_updates'; // '1' | '0' (default on)
 
-    /** Konfigurierte Domains (Option, plus Konstante als Erst-Default). */
+    /** Configured domains (option, plus constant as initial default). */
     public static function configured_domains()
     {
         $opt = get_option(self::OPT_DOMAINS, null);
@@ -66,8 +66,8 @@ final class EtchSecurity_Config
     }
 
     /**
-     * Effektive Allowlist: konfigurierte Domains + die Domain der Site-Admin-
-     * Adresse (immer, gegen Selbst-Aussperren) + Filter fuer Programmatik.
+     * Effective allowlist: configured domains + the domain of the site admin
+     * address (always, to prevent self-lockout) + filter for programmatic use.
      */
     public static function allowed_domains()
     {
@@ -77,20 +77,20 @@ final class EtchSecurity_Config
         $at = strrpos($admin, '@');
         if ($at !== false) $domains[] = substr($admin, $at + 1);
 
-        /** @return string[] Liste erlaubter Domains (klein geschrieben). */
+        /** @return string[] List of allowed domains (lowercased). */
         $domains = apply_filters('etch_security_allowed_domains', $domains);
 
         return array_values(array_unique(array_filter(array_map('strtolower', (array) $domains))));
     }
 
-    /** Enforcement nur, wenn eingeschaltet UND mindestens eine Domain konfiguriert. */
+    /** Enforcement only when enabled AND at least one domain is configured. */
     public static function enforcing()
     {
         if (get_option(self::OPT_ENFORCE, '0') !== '1') return false;
         return count(self::configured_domains()) > 0;
     }
 
-    /** Core-Security-Auto-Updates erzwingen (Default an). */
+    /** Force core security auto-updates (default on). */
     public static function force_core_updates()
     {
         return get_option(self::OPT_CORE_UPDATES, '1') === '1';
@@ -120,7 +120,7 @@ final class EtchSecurity_Config
 
 
 /* =============================================================================
- * 1) User Guard — Domain-Allowlist + Backstop
+ * 1) User Guard — Domain Allowlist + Backstop
  * ========================================================================== */
 
 final class EtchSecurity_User_Guard
@@ -130,12 +130,12 @@ final class EtchSecurity_User_Guard
 
     public static function boot()
     {
-        // Schicht 1 — Praevention auf den regulaeren Wegen.
+        // Layer 1 — Prevention on the regular paths.
         add_filter('rest_pre_insert_user',       array(__CLASS__, 'guard_rest'), 10, 2);
         add_action('user_profile_update_errors', array(__CLASS__, 'guard_profile'), 10, 3);
         add_filter('registration_errors',        array(__CLASS__, 'guard_registration'), 10, 3);
 
-        // Schicht 2 — Backstop, faengt auch wp_insert_user() + Eskalation.
+        // Layer 2 — Backstop, also catches wp_insert_user() + escalation.
         add_action('user_register', array(__CLASS__, 'backstop'), PHP_INT_MAX, 1);
         add_action('set_user_role', array(__CLASS__, 'watch_role'), PHP_INT_MAX, 3);
     }
@@ -144,13 +144,13 @@ final class EtchSecurity_User_Guard
     {
         $list = EtchSecurity_Config::allowed_domains();
         return sprintf(
-            /* translators: %s = Liste der erlaubten Domains */
-            __('Diese E-Mail-Adresse ist nicht zugelassen. Konten sind auf %s beschränkt.', 'etch-security'),
+            /* translators: %s = list of allowed domains */
+            __('This email address is not allowed. Accounts are restricted to %s.', 'etch-security'),
             '@' . implode(', @', $list)
         );
     }
 
-    // ---------------------------------------------------------------- Schicht 1
+    // ---------------------------------------------------------------- Layer 1
 
     public static function guard_rest($prepared_user, $request)
     {
@@ -158,7 +158,7 @@ final class EtchSecurity_User_Guard
         $email = isset($prepared_user->user_email) ? $prepared_user->user_email : '';
         if ($email !== '' && !EtchSecurity_Config::is_allowed($email)) {
             EtchSecurity_Audit_Log::log('guard_blocked', array('login' => $email),
-                array('weg' => 'rest', 'email' => $email));
+                array('path' => 'rest', 'email' => $email));
             return new WP_Error('etch_security_user_guard', self::refusal(), array('status' => 403));
         }
         return $prepared_user;
@@ -172,13 +172,13 @@ final class EtchSecurity_User_Guard
 
         if ($update && !empty($user->ID)) {
             $current = get_userdata($user->ID);
-            if ($current && strtolower($current->user_email) === strtolower($email)) return; // unveraendert
+            if ($current && strtolower($current->user_email) === strtolower($email)) return; // unchanged
         }
         if (!EtchSecurity_Config::is_allowed($email)) {
             $errors->add('etch_security_user_guard', self::refusal());
             EtchSecurity_Audit_Log::log('guard_blocked',
                 array('id' => isset($user->ID) ? (int) $user->ID : 0, 'login' => $email),
-                array('weg' => 'profile', 'email' => $email));
+                array('path' => 'profile', 'email' => $email));
         }
     }
 
@@ -188,12 +188,12 @@ final class EtchSecurity_User_Guard
         if ($email !== '' && !EtchSecurity_Config::is_allowed($email)) {
             $errors->add('etch_security_user_guard', self::refusal());
             EtchSecurity_Audit_Log::log('guard_blocked', array('login' => $email),
-                array('weg' => 'registration', 'email' => $email));
+                array('path' => 'registration', 'email' => $email));
         }
         return $errors;
     }
 
-    // ---------------------------------------------------------------- Schicht 2
+    // ---------------------------------------------------------------- Layer 2
 
     public static function backstop($user_id)
     {
@@ -213,7 +213,7 @@ final class EtchSecurity_User_Guard
         }
     }
 
-    /** Konto unbrauchbar machen, ohne es zu loeschen (Beweismittel). */
+    /** Disable account without deleting it (preserved as evidence). */
     private static function neutralize($user, $trigger)
     {
         self::$busy = true;
@@ -240,21 +240,21 @@ final class EtchSecurity_User_Guard
         if (!$to) return;
         $brand = get_bloginfo('name') ?: 'Etch Security';
         $body = sprintf(
-            "Es wurde ein Konto mit nicht zugelassener Domain angelegt und sofort entschärft.\n\n"
-            . "Benutzer:  %s\nE-Mail:    %s\nID:        %d\nAusgelöst durch: %s\nZeit:      %s\nIP:        %s\n\n"
-            . "Status: Rolle entzogen, Passwort invalidiert, Sessions beendet.\n"
-            . "Das Konto wurde NICHT gelöscht — es ist Beweismittel.\n"
-            . "Details: Werkzeuge → Etch Security.",
+            "An account with a disallowed domain was created and immediately neutralized.\n\n"
+            . "User:        %s\nEmail:       %s\nID:          %d\nTriggered by: %s\nTime:        %s\nIP:          %s\n\n"
+            . "Status: role stripped, password invalidated, sessions terminated.\n"
+            . "The account was NOT deleted — it is preserved as evidence.\n"
+            . "Details: Tools → Etch Security.",
             $user->user_login, $user->user_email, $user->ID, $trigger,
             current_time('mysql'), EtchSecurity_Util::ip()
         );
-        wp_mail($to, '[' . $brand . '] ' . __('Fremder Benutzer blockiert', 'etch-security') . ': ' . $user->user_login, $body);
+        wp_mail($to, '[' . $brand . '] ' . __('Foreign user blocked', 'etch-security') . ': ' . $user->user_login, $body);
     }
 }
 
 
 /* =============================================================================
- * 2) Audit Log — dauerhaftes, selbst gehostetes Sicherheits-Log
+ * 2) Audit Log — persistent, self-hosted security log
  * ========================================================================== */
 
 final class EtchSecurity_Audit_Log
@@ -269,21 +269,21 @@ final class EtchSecurity_Audit_Log
     {
         add_action('plugins_loaded', array(__CLASS__, 'maybe_install'));
 
-        // Konten
+        // Accounts
         add_action('user_register',   array(__CLASS__, 'on_user_register'), 5, 1);
         add_action('profile_update',  array(__CLASS__, 'on_profile_update'), 5, 2);
         add_action('set_user_role',   array(__CLASS__, 'on_set_role'), 5, 3);
         add_action('deleted_user',    array(__CLASS__, 'on_deleted_user'), 5, 3);
         add_action('wp_create_application_password', array(__CLASS__, 'on_app_password'), 5, 2);
-        // Authentifizierung
+        // Authentication
         add_action('wp_login',        array(__CLASS__, 'on_login'), 5, 2);
         add_action('wp_login_failed', array(__CLASS__, 'on_login_failed'), 5, 1);
         add_action('after_password_reset', array(__CLASS__, 'on_password_reset'), 5, 1);
-        // Code-Aenderungen (Persistenz-Vektoren)
+        // Code changes (persistence vectors)
         add_action('activated_plugin',   array(__CLASS__, 'on_plugin_activated'), 5, 1);
         add_action('deactivated_plugin', array(__CLASS__, 'on_plugin_deactivated'), 5, 1);
         add_action('switch_theme',       array(__CLASS__, 'on_switch_theme'), 5, 1);
-        // Aufbewahrung
+        // Retention
         add_action(self::CRON_HOOK, array(__CLASS__, 'prune'));
         if (!wp_next_scheduled(self::CRON_HOOK)) {
             wp_schedule_event(time() + 3600, 'daily', self::CRON_HOOK);
@@ -326,7 +326,7 @@ final class EtchSecurity_Audit_Log
         update_option(self::DB_OPTION, self::DB_VERSION, false);
     }
 
-    /** Zentrale Schreibfunktion. $target = [id, login]; $detail = Array. */
+    /** Central write function. $target = [id, login]; $detail = array. */
     public static function log($event, $target = array(), $detail = array())
     {
         global $wpdb;
@@ -360,13 +360,13 @@ final class EtchSecurity_Audit_Log
         if (!$u) return;
         if (!$old || strtolower($old->user_email) === strtolower($u->user_email)) return;
         self::log('profile_update', array('id' => $user_id, 'login' => $u->user_login),
-            array('email' => array('von' => $old->user_email, 'nach' => $u->user_email)));
+            array('email' => array('from' => $old->user_email, 'to' => $u->user_email)));
     }
     public static function on_set_role($user_id, $role, $old_roles)
     {
         $u = get_userdata($user_id);
         self::log('set_user_role', array('id' => $user_id, 'login' => $u ? $u->user_login : ''),
-            array('neu' => $role ?: '(keine)', 'vorher' => $old_roles ?: array()));
+            array('new' => $role ?: '(none)', 'previous' => $old_roles ?: array()));
     }
     public static function on_deleted_user($id, $reassign, $user)
     {
@@ -403,7 +403,7 @@ final class EtchSecurity_Audit_Log
 
 
 /* =============================================================================
- * 3) Hilfsfunktionen (IP / Kontext)
+ * 3) Utility functions (IP / context)
  * ========================================================================== */
 
 final class EtchSecurity_Util
@@ -414,9 +414,9 @@ final class EtchSecurity_Util
     }
 
     /**
-     * Quell-IP. Bewusst REMOTE_ADDR: Proxy-Header (X-Forwarded-For etc.) sind
-     * client-seitig faelschbar und taugen nicht als Beweismittel. Sitzt ein
-     * vertrauenswuerdiger Reverse-Proxy/CDN davor, per Filter ergaenzen.
+     * Source IP. Deliberately REMOTE_ADDR: proxy headers (X-Forwarded-For etc.)
+     * are client-spoofable and are not suitable as evidence. If a trusted
+     * reverse proxy/CDN is in front, supplement via filter.
      */
     public static function ip()
     {
@@ -437,7 +437,7 @@ final class EtchSecurity_Util
 
 
 /* =============================================================================
- * 4) Self-Updater (GitHub-Releases) — mirror des WebAudits-Musters
+ * 4) Self-Updater (GitHub releases)
  * ========================================================================== */
 
 final class EtchSecurity_Updater
@@ -454,11 +454,11 @@ final class EtchSecurity_Updater
     }
 
     /**
-     * Neueste Version + Code direkt aus der Datei auf `main` ziehen.
-     * Bewusst raw.githubusercontent statt api.github.com: die GitHub-API ist pro
-     * (auf Shared-Hosting geteilter) IP auf 60 Requests/Stunde limitiert und
-     * liefert dann 403 — raw ist ein CDN ohne dieses Limit. Vertrag: `main`
-     * trägt immer die aktuellste veröffentlichte Version (Versionsbump = Release).
+     * Fetch latest version + code directly from the file on `main`.
+     * Deliberately raw.githubusercontent instead of api.github.com: the GitHub
+     * API is rate-limited to 60 requests/hour per (shared) IP and then returns
+     * 403 — raw is a CDN without this limit. Contract: `main` always carries the
+     * latest published version (version bump = release).
      */
     private static function fetch_main()
     {
@@ -473,8 +473,8 @@ final class EtchSecurity_Updater
     }
 
     /**
-     * Update-Lauf. Gibt Status-Array zurueck. Ein Request (raw main) deckt
-     * Versionsprüfung UND Download ab.
+     * Update run. Returns status array. One request (raw main) covers both
+     * version check AND download.
      */
     public static function run($force = false)
     {
@@ -482,7 +482,7 @@ final class EtchSecurity_Updater
                         'latest' => null, 'action' => 'none', 'error' => null);
 
         $main = self::fetch_main();
-        if (!$main) { $status['error'] = 'raw.githubusercontent nicht erreichbar / Version nicht lesbar'; return self::save($status); }
+        if (!$main) { $status['error'] = 'raw.githubusercontent not reachable / version not readable'; return self::save($status); }
 
         $latest = $main['version'];
         $status['latest'] = $latest;
@@ -494,21 +494,21 @@ final class EtchSecurity_Updater
 
         $code = $main['code'];
 
-        // Plausibilitaet: echte PHP-Datei dieses Plugins mit passender Version.
+        // Plausibility: real PHP file of this plugin with matching version.
         if (strpos($code, '<?php') !== 0
             || strpos($code, 'Plugin Name: Etch Security') === false
             || strpos($code, "ETCH_SECURITY_VERSION', '" . $latest . "'") === false) {
-            $status['error'] = 'Release-Datei unplausibel — nichts geschrieben'; return self::save($status);
+            $status['error'] = 'Release file implausible — nothing written'; return self::save($status);
         }
 
         $target = ETCH_SECURITY_FILE;
-        if (!is_writable($target)) { $status['error'] = 'Datei nicht schreibbar: ' . $target; return self::save($status); }
+        if (!is_writable($target)) { $status['error'] = 'File not writable: ' . $target; return self::save($status); }
 
-        // Atomar schreiben: temp + rename.
+        // Write atomically: temp + rename.
         $tmp = $target . '.tmp-' . wp_generate_password(6, false);
         if (file_put_contents($tmp, $code) === false || !@rename($tmp, $target)) {
             @unlink($tmp);
-            $status['error'] = 'Schreiben fehlgeschlagen'; return self::save($status);
+            $status['error'] = 'Write failed'; return self::save($status);
         }
 
         $status['action'] = 'updated';
@@ -530,7 +530,7 @@ final class EtchSecurity_Updater
 
 
 /* =============================================================================
- * 5) Admin — eine Seite: Werkzeuge → Etch Security
+ * 5) Admin — one page: Tools → Etch Security
  * ========================================================================== */
 
 final class EtchSecurity_Admin
@@ -562,7 +562,7 @@ final class EtchSecurity_Admin
 
         echo '<div class="wrap"><h1>Etch Security</h1>';
         echo '<h2 class="nav-tab-wrapper">';
-        foreach (array('status' => 'Status & Einstellungen', 'log' => 'Sicherheits-Log') as $k => $label) {
+        foreach (array('status' => 'Status & Settings', 'log' => 'Security Log') as $k => $label) {
             printf('<a href="%s" class="nav-tab%s">%s</a>',
                 esc_url(self::tab_url($k)), $tab === $k ? ' nav-tab-active' : '', esc_html($label));
         }
@@ -587,62 +587,62 @@ final class EtchSecurity_Admin
         $enforcing = EtchSecurity_Config::enforcing();
         $st       = EtchSecurity_Updater::status();
 
-        echo '<h3>WordPress-Core</h3>';
+        echo '<h3>WordPress Core</h3>';
         echo '<table class="widefat" style="max-width:820px"><tbody>';
-        self::row('Core-Version', '<code>' . esc_html(get_bloginfo('version')) . '</code>');
-        self::row('Security-Auto-Updates', EtchSecurity_Config::force_core_updates()
-            ? '<strong style="color:#1a7f37">erzwungen</strong> — Minor/Security laufen durch, auch gegen einen Blocker (z. B. Installatron)'
-            : '<span style="color:#996800">nicht erzwungen</span> — es gilt die Site-Policy');
+        self::row('Core Version', '<code>' . esc_html(get_bloginfo('version')) . '</code>');
+        self::row('Security Auto-Updates', EtchSecurity_Config::force_core_updates()
+            ? '<strong style="color:#1a7f37">enforced</strong> — minor/security releases run through, even against a blocker (e.g. Installatron)'
+            : '<span style="color:#996800">not enforced</span> — site policy applies');
         echo '</tbody></table>';
 
         echo '<h3>User Guard</h3>';
         echo '<table class="widefat" style="max-width:820px"><tbody>';
         self::row('Enforcement', $enforcing
-            ? '<strong style="color:#1a7f37">aktiv</strong> — fremde Domains werden entschärft'
-            : '<strong style="color:#996800">inaktiv</strong> — nur Audit-Log läuft (keine Domain gesetzt oder Schalter aus)');
-        self::row('Erlaubte Domains (effektiv)', $eff ? '<code>' . esc_html(implode(', ', $eff)) . '</code>' : '—');
+            ? '<strong style="color:#1a7f37">active</strong> — foreign domains will be neutralized'
+            : '<strong style="color:#996800">inactive</strong> — only audit log runs (no domain configured or switch off)');
+        self::row('Allowed Domains (effective)', $eff ? '<code>' . esc_html(implode(', ', $eff)) . '</code>' : '—');
         echo '</tbody></table>';
 
         echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="margin:1.5em 0;max-width:820px">';
         wp_nonce_field('etch_security_save');
         echo '<input type="hidden" name="action" value="etch_security_save">';
-        echo '<p><label><strong>Erlaubte Domains</strong> (eine pro Zeile oder komma­getrennt; ohne @):</label><br>';
-        echo '<textarea name="domains" rows="4" style="width:100%;max-width:520px" placeholder="kunze-ritter.de">'
+        echo '<p><label><strong>Allowed Domains</strong> (one per line or comma-separated; without @):</label><br>';
+        echo '<textarea name="domains" rows="4" style="width:100%;max-width:520px" placeholder="example.com">'
             . esc_textarea(implode("\n", $domains)) . '</textarea></p>';
         echo '<p><label><input type="checkbox" name="enforce" value="1"' . checked($enforce, true, false) . '> '
-            . 'Enforcement einschalten (fremde Konten sofort entschärfen)</label></p>';
-        echo '<p class="description">Die Domain der Site-Admin-Adresse (' . esc_html(get_option('admin_email'))
-            . ') ist immer erlaubt. Ohne konfigurierte Domain bleibt Enforcement aus Sicherheitsgründen aus.</p>';
+            . 'Enable enforcement (immediately neutralize foreign accounts)</label></p>';
+        echo '<p class="description">The domain of the site admin address (' . esc_html(get_option('admin_email'))
+            . ') is always allowed. Without a configured domain, enforcement stays off for safety.</p>';
         echo '<p style="margin-top:1.5em"><label><input type="checkbox" name="force_core" value="1"'
             . checked(EtchSecurity_Config::force_core_updates(), true, false) . '> '
-            . '<strong>WordPress-Core-Sicherheitsupdates erzwingen</strong> — lässt Minor-/Security-Point-Releases '
-            . 'automatisch durchlaufen, auch wenn ein Management-Tool (z. B. Installatron) sie abgeschaltet hat. '
-            . 'Major-Versionssprünge bleiben unberührt.</label></p>';
-        submit_button('Speichern');
+            . '<strong>Force WordPress core security updates</strong> — lets minor/security point releases run automatically, '
+            . 'even if a management tool (e.g. Installatron) has disabled them. '
+            . 'Major version jumps are left untouched.</label></p>';
+        submit_button('Save');
         echo '</form>';
 
         echo '<hr><h3>Version & Self-Update</h3>';
         echo '<table class="widefat" style="max-width:820px"><tbody>';
-        self::row('Installierte Version', '<code>' . esc_html(ETCH_SECURITY_VERSION) . '</code>');
+        self::row('Installed Version', '<code>' . esc_html(ETCH_SECURITY_VERSION) . '</code>');
         $latest = isset($st['latest']) ? $st['latest'] : null;
         $vtxt = $latest ? esc_html($latest) : '—';
         if ($latest && version_compare($latest, ETCH_SECURITY_VERSION, '>')) {
-            $vtxt .= ' <strong style="color:#996800">(Update verfügbar — beim nächsten Cron-Lauf)</strong>';
+            $vtxt .= ' <strong style="color:#996800">(update available — on the next cron run)</strong>';
         } elseif ($latest) {
-            $vtxt .= ' <span style="color:#1a7f37">(aktuell)</span>';
+            $vtxt .= ' <span style="color:#1a7f37">(up to date)</span>';
         }
-        self::row('Neueste Release', $vtxt);
-        self::row('Letzte Prüfung', isset($st['checked']) ? esc_html($st['checked'])
-            . (isset($st['action']) ? ' · ' . esc_html($st['action']) : '') : 'noch keine');
-        if (!empty($st['error'])) self::row('Letzter Fehler', '<span style="color:#b32d2e">' . esc_html($st['error']) . '</span>');
-        self::row('Quelle', '<a href="https://github.com/' . esc_attr(ETCH_SECURITY_REPO)
-            . '/releases" target="_blank" rel="noopener">github.com/' . esc_html(ETCH_SECURITY_REPO) . '</a> · automatisch 2×/Tag');
+        self::row('Latest Release', $vtxt);
+        self::row('Last Check', isset($st['checked']) ? esc_html($st['checked'])
+            . (isset($st['action']) ? ' · ' . esc_html($st['action']) : '') : 'never');
+        if (!empty($st['error'])) self::row('Last Error', '<span style="color:#b32d2e">' . esc_html($st['error']) . '</span>');
+        self::row('Source', '<a href="https://github.com/' . esc_attr(ETCH_SECURITY_REPO)
+            . '/releases" target="_blank" rel="noopener">github.com/' . esc_html(ETCH_SECURITY_REPO) . '</a> · automatic 2×/day');
         echo '</tbody></table>';
 
         echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="margin-top:1em">';
         wp_nonce_field('etch_security_update');
         echo '<input type="hidden" name="action" value="etch_security_update">';
-        submit_button('Jetzt auf Updates prüfen', 'secondary');
+        submit_button('Check for Updates Now', 'secondary');
         echo '</form>';
     }
 
@@ -668,19 +668,19 @@ final class EtchSecurity_Admin
         $events = $wpdb->get_col("SELECT DISTINCT event FROM $table ORDER BY event");
         $csv = wp_nonce_url(admin_url('admin-post.php?action=etch_security_csv'), 'etch_security_csv');
 
-        echo '<p>' . esc_html((string) $total) . ' Einträge · Aufbewahrung '
-            . esc_html((string) EtchSecurity_Audit_Log::RETAIN_DAYS) . ' Tage · Zeiten in Website-Zeitzone.</p>';
+        echo '<p>' . esc_html((string) $total) . ' entries · retention '
+            . esc_html((string) EtchSecurity_Audit_Log::RETAIN_DAYS) . ' days · times in site timezone.</p>';
 
         echo '<form method="get" style="margin:1em 0"><input type="hidden" name="page" value="' . esc_attr(self::SLUG) . '">';
-        echo '<input type="hidden" name="tab" value="log"><select name="ev"><option value="">— alle Ereignisse —</option>';
+        echo '<input type="hidden" name="tab" value="log"><select name="ev"><option value="">— all events —</option>';
         foreach ($events as $e) {
             printf('<option value="%s"%s>%s</option>', esc_attr($e), selected($ev, $e, false), esc_html($e));
         }
-        echo '</select> <button class="button">Filtern</button> <a class="button" href="' . esc_url($csv) . '">CSV-Export</a></form>';
+        echo '</select> <button class="button">Filter</button> <a class="button" href="' . esc_url($csv) . '">CSV Export</a></form>';
 
-        echo '<table class="widefat striped"><thead><tr><th>Zeit</th><th>Ereignis</th><th>Actor</th>'
-            . '<th>Ziel</th><th>IP</th><th>Kontext</th><th>Details</th></tr></thead><tbody>';
-        if (!$rows) echo '<tr><td colspan="7">Noch keine Einträge.</td></tr>';
+        echo '<table class="widefat striped"><thead><tr><th>Time</th><th>Event</th><th>Actor</th>'
+            . '<th>Target</th><th>IP</th><th>Context</th><th>Details</th></tr></thead><tbody>';
+        if (!$rows) echo '<tr><td colspan="7">No entries yet.</td></tr>';
         foreach ($rows as $r) {
             $actor  = $r->actor_id ? $r->actor_login . ' (#' . $r->actor_id . ')' : ($r->actor_login ?: '—');
             $target = $r->target_login ? $r->target_login . ($r->target_id ? ' (#' . $r->target_id . ')' : '') : '—';
@@ -702,36 +702,36 @@ final class EtchSecurity_Admin
         }
     }
 
-    // ------------------------------------------------------------- Aktionen
+    // ------------------------------------------------------------- Actions
 
     public static function save_settings()
     {
-        if (!current_user_can('manage_options')) wp_die('Keine Berechtigung.');
+        if (!current_user_can('manage_options')) wp_die('Insufficient permissions.');
         check_admin_referer('etch_security_save');
         $domains = EtchSecurity_Config::parse(isset($_POST['domains']) ? wp_unslash($_POST['domains']) : '');
         update_option(EtchSecurity_Config::OPT_DOMAINS, $domains, false);
         update_option(EtchSecurity_Config::OPT_ENFORCE, empty($_POST['enforce']) ? '0' : '1', false);
         update_option(EtchSecurity_Config::OPT_CORE_UPDATES, empty($_POST['force_core']) ? '0' : '1', false);
-        $msg = $domains ? 'Gespeichert.' : 'Gespeichert (keine Domain → Enforcement bleibt aus).';
+        $msg = $domains ? 'Saved.' : 'Saved (no domain configured → enforcement stays off).';
         wp_safe_redirect(add_query_arg('msg', rawurlencode($msg), self::tab_url('status')));
         exit;
     }
 
     public static function manual_update()
     {
-        if (!current_user_can('manage_options')) wp_die('Keine Berechtigung.');
+        if (!current_user_can('manage_options')) wp_die('Insufficient permissions.');
         check_admin_referer('etch_security_update');
         $st = EtchSecurity_Updater::run(true);
-        $msg = !empty($st['error']) ? 'Update-Prüfung: ' . $st['error']
-             : ($st['action'] === 'updated' ? 'Aktualisiert auf ' . $st['updated_to'] . '.'
-             : 'Version ist aktuell (' . ETCH_SECURITY_VERSION . ').');
+        $msg = !empty($st['error']) ? 'Update check: ' . $st['error']
+             : ($st['action'] === 'updated' ? 'Updated to ' . $st['updated_to'] . '.'
+             : 'Version is up to date (' . ETCH_SECURITY_VERSION . ').');
         wp_safe_redirect(add_query_arg('msg', rawurlencode($msg), self::tab_url('status')));
         exit;
     }
 
     public static function export_csv()
     {
-        if (!current_user_can('manage_options')) wp_die('Keine Berechtigung.');
+        if (!current_user_can('manage_options')) wp_die('Insufficient permissions.');
         check_admin_referer('etch_security_csv');
         global $wpdb;
         $rows = $wpdb->get_results("SELECT * FROM " . EtchSecurity_Audit_Log::table() . " ORDER BY id DESC", ARRAY_A);
@@ -749,7 +749,7 @@ final class EtchSecurity_Admin
 
 
 /* =============================================================================
- * 6) Core Updates — Minor-/Security-Auto-Updates erzwingen
+ * 6) Core Updates — force minor/security auto-updates
  * ========================================================================== */
 
 final class EtchSecurity_Core_Updates
@@ -758,19 +758,19 @@ final class EtchSecurity_Core_Updates
     {
         if (!EtchSecurity_Config::force_core_updates()) return;
 
-        // Überstimmt Blocker wie Installatron (die per __return_false abschalten):
-        // spätere Priorität gewinnt, PHP_INT_MAX läuft als letztes.
+        // Overrides blockers like Installatron (which disable via __return_false):
+        // later priority wins, PHP_INT_MAX runs last.
         add_filter('allow_minor_auto_core_updates', '__return_true', PHP_INT_MAX);
         add_filter('auto_update_core', array(__CLASS__, 'allow_security'), PHP_INT_MAX, 2);
 
-        // Ergebnis eines Auto-Updates ins Audit-Log.
+        // Log the result of an auto-update to the audit log.
         add_action('automatic_updates_complete', array(__CLASS__, 'log_result'), 10, 1);
     }
 
     /**
-     * Erzwingt das Auto-Update NUR für Minor-/Security-Point-Releases (gleiche
-     * X.Y-Reihe, z. B. 7.0.1 → 7.0.2). Major-Updates behalten die bestehende
-     * Entscheidung — die bleiben bei Installatron/manuell.
+     * Forces auto-update ONLY for minor/security point releases (same X.Y branch,
+     * e.g. 7.0.1 → 7.0.2). Major updates keep the existing decision — those remain
+     * with Installatron/manual.
      */
     public static function allow_security($update, $item)
     {
@@ -780,7 +780,7 @@ final class EtchSecurity_Core_Updates
         return $update;
     }
 
-    /** Gleiche Major.Minor-Reihe? Dev-Suffixe (-beta/-RC) werden ignoriert. */
+    /** Same major.minor branch? Dev suffixes (-beta/-RC) are ignored. */
     private static function same_branch($a, $b)
     {
         $pa = explode('.', preg_replace('/[^0-9.].*$/', '', (string) $a));
@@ -796,7 +796,7 @@ final class EtchSecurity_Core_Updates
             $ok  = !empty($r->result) && !is_wp_error($r->result);
             EtchSecurity_Audit_Log::log('core_auto_update',
                 array('login' => 'WordPress'),
-                array('version' => $ver, 'erfolg' => $ok ? 'ja' : 'nein'));
+                array('version' => $ver, 'success' => $ok ? 'yes' : 'no'));
         }
     }
 }
@@ -806,7 +806,7 @@ final class EtchSecurity_Core_Updates
  * 7) Bootstrap
  * ========================================================================== */
 
-EtchSecurity_Audit_Log::boot();   // zuerst — andere Module loggen hierüber
+EtchSecurity_Audit_Log::boot();   // first — other modules log through this
 EtchSecurity_User_Guard::boot();
 EtchSecurity_Core_Updates::boot();
 EtchSecurity_Updater::boot();
