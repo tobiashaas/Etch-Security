@@ -1,5 +1,14 @@
 # Etch Security
 
+> **Archiviert (01.10.2026):** Etch Security ist in der
+> [WebAudits Suite](https://github.com/tobiashaas/webaudits-suite) aufgegangen
+> (ab Version 3.6, Modul „Konten & Sicherheit"). User Guard, Sicherheits-Log und
+> erzwungene Core-Sicherheitsupdates funktionieren dort unverändert, mit denselben
+> Optionen und derselben Log-Tabelle. **Umstieg:** Suite installieren, dann
+> `etch-security.php` aus `wp-content/mu-plugins/` löschen — Einstellungen und Log
+> bleiben erhalten. Solange die alte Datei geladen ist, bleibt das Suite-Modul aus,
+> es läuft also nie doppelt. Dieses Repo bekommt keine Updates mehr.
+
 Ein leichtgewichtiges WordPress-Sicherheits-Plugin in **einer Datei** — zwei
 Schutzschichten plus ein selbst gehostetes Audit-Log, das ohne Premium-Abo
 auskommt und sich per GitHub-Releases selbst aktuell hält.
